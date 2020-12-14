@@ -11,8 +11,6 @@
 #include <Wire.h>
 #endif
 
-// function prototypes
-int boyer_moore_search(char*, int, char*, int);
 
 U8G2_MAX7219_64X8_F_4W_SW_SPI u8g2R0(U8G2_R0, /* clock=*/16, /* data=*/5, /* cs=*/4, /* dc=*/U8X8_PIN_NONE, /* reset=*/U8X8_PIN_NONE);
 U8G2_MAX7219_64X8_F_4W_SW_SPI u8g2R1(U8G2_R0, /* clock=*/16, /* data=*/5, /* cs=*/0, /* dc=*/U8X8_PIN_NONE, /* reset=*/U8X8_PIN_NONE);
@@ -176,33 +174,4 @@ void loop(void) {
     u8g2R3.sendBuffer();                    // transfer internal memory to the display
 
     delay(10000);
-}
-int boyer_moore_search(char* text, int textLen, char* search, int searchLen) {
-    // preprocess Bad Character Rule lookup table
-    // char lut[256][256];
-
-    // loop over all positions in text
-    for (int i = searchLen - 1; i < textLen; i++) {
-        if (text[i] == '\0') {
-            return -1;  // text did not contain search
-        }
-        // slide search mask over text
-        for (int k = 0; k < searchLen; k++) {
-            // printf("%d:%c\n", i - k, text[i - k]);
-
-            // compare text with mask
-            if (text[i - k] == search[searchLen - 1 - k]) {
-                if (k == searchLen) {
-                    // return position of first search result
-                    return i - searchLen - 1;
-                }
-            } else {
-                // if not matching, skip a few bytes (Bad Character Rule)
-
-                i += searchLen - 1;
-                break;
-            }
-        }
-    }
-    return -1;  // text did not contain search
 }
