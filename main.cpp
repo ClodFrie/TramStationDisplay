@@ -15,6 +15,9 @@
 
 // function prototypes
 void writeToDisplay(U8G2_MAX7219_64X8_F_4W_SW_SPI* u8g2R, char* buffer);
+void requestData(WiFiClient* client);
+void processResponse(int* state, String* line, int* i);
+void printResultsLED(void);
 
 U8G2_MAX7219_64X8_F_4W_SW_SPI u8g2R0(U8G2_R0, /* clock=*/16, /* data=*/5, /* cs=*/4, /* dc=*/U8X8_PIN_NONE, /* reset=*/U8X8_PIN_NONE);
 U8G2_MAX7219_64X8_F_4W_SW_SPI u8g2R1(U8G2_R0, /* clock=*/16, /* data=*/5, /* cs=*/0, /* dc=*/U8X8_PIN_NONE, /* reset=*/U8X8_PIN_NONE);
@@ -27,9 +30,21 @@ U8G2_MAX7219_64X8_F_4W_SW_SPI u8g2Lines[4] = {u8g2R0, u8g2R1, u8g2R2, u8g2R3};
 WiFiClient client;
 char receive[256];  // 0..255
 char flag = 0;
-unsigned long act_time = 0;  // timeout variable
+unsigned long act_time;  // wifi grabber time
+unsigned int display_page;
+unsigned long page_timer;
+
+#define NO_TRIPS 18  // number of trips to save
+int countdown[NO_TRIPS];
+int bimline[NO_TRIPS];
+String dest[NO_TRIPS];
 
 void setup(void) {
+    // initialize timing variable
+    act_time = millis();
+    page_timer = 0;
+    display_page = 0;
+
     Serial.begin(115200);
 
     // for network information include main.h
@@ -64,112 +79,45 @@ void setup(void) {
     // assign contrast value to all lines
     for (int i = 0; i < 4; i++) {
         (u8g2Lines[i]).begin();
-        (u8g2Lines[i]).setContrast(15);
+        (u8g2Lines[i]).setContrast(4);
     }
-
-    // initialize timing variable
-    act_time = millis();
 }
 
 void loop(void) {
-    if (millis() > act_time + (unsigned long)15000) {
-        const char* host = "www.linzag.at";
+    if (millis() > act_time + (unsigned long)20000) {
         act_time = millis();
+
         WiFiClient client;
         // allocate trip variables
-        int noTrips = 10;  // number of trips to request save
-        int countdown[noTrips];
-        int bimline[noTrips];
-        String dest[noTrips];
+        requestData(&client);
 
-        Serial.printf("\n[Connecting to %s ... ", host);
-        if (client.connect(host, 80)) {
-            Serial.println("connected]");
+        int i = 0;
+        int state = 0;
+        while (client.connected() || client.available()) {
+            if (client.available()) {
+                // read string from website
+                // and grab departure information
 
-            Serial.println("[Sending a request]");
-            client.print(String("GET /static/XML_DM_REQUEST?name_dm=60500980&type_dm=any&mode=direct&limit=7") + " HTTP/1.1\r\n" +
-                         "Host: " + host + "\r\n" +
-                         "Connection: close\r\n" +
-                         "\r\n");
+                String line = client.readStringUntil('>');
 
-            Serial.println("[Response:]");
-            int i = 0;
-            bool thereIsMore = true;
-            while (client.connected()) {
-                if (client.available()) {
-                    // read string from website
-                    // and grab departure information
-
-                    String line = client.readStringUntil('\r');
-                    int idx, idx2;
-                    // find occurence of first "countdown=\"" in string
-                    idx = line.indexOf("countdown=\"");
-
-                    while (idx > 0 && thereIsMore) {
-                        // idx = line.indexOf("countdown=\"");  // commented out -> this one is done prior to the loop
-                        idx2 = line.indexOf("\"", idx + 11);
-                        String subs = line.substring(idx + 11, idx2);
-
-                        countdown[i] = subs.toInt();  // convert the string we found to integer
-
-                        idx = line.indexOf("number=\"", idx2);
-                        idx2 = line.indexOf("\"", idx + 8);
-                        subs = line.substring(idx + 8, idx2);
-
-                        bimline[i] = subs.toInt();  // convert the line number to integer
-
-                        idx = line.indexOf("direction=\"", idx2);
-                        idx2 = line.indexOf("\"", idx + 16);
-                        dest[i] = line.substring(idx + 16, idx2);
-                        if (dest[i].startsWith("JKU")) {
-                            // if "JKU[...]", convert to "JKU Universität", otherwise it writes "JKU I U" onto the display
-                            dest[i] = "JKU Universität";
-                        } else if (dest[i].startsWith("J")) {  // disregard Jäger im Tal as valid destination
-                            continue;
-                        }
-
-                        Serial.printf("ctd:%d,line:%d,direction:", countdown[i], bimline[i]);
-                        Serial.println(dest[i]);
-                        i++;
-
-                        idx = line.indexOf("countdown=\"", idx2);
-                        if (idx > 0 && i < 4) {
-                            thereIsMore = true;
-                            yield();  // let ESP do some background stuff e.g. networking
-                        } else {
-                            thereIsMore = false;
-                        }
-                    }
-                    yield();
+                // Serial.println(line);
+                processResponse(&state, &line, &i);
+                if (i > NO_TRIPS - 1) {  // prevent overflow of arrays
+                    client.stop();
+                    break;
                 }
-            }
-            // stopping client connection
-            client.stop();
-            Serial.println("\n[Disconnected]");
 
-            // write grabbed information onto the display
-            char buffer[16];
-            char string[7];
-            int minutes;
-
-            for (int i = 0; i < 4; i++) {
-                minutes = countdown[i];
-                if (minutes > 99) {
-                    minutes = 99;  // only two digits are available
-                }
-                dest[i].toCharArray(string, dest[i].length());
-                sprintf(buffer, "%02d %.*s %02d", bimline[i], 7, string, minutes);
-                writeToDisplay(&(u8g2Lines[i]), buffer);
+                yield();  // let ESP do some background stuff e.g. networking
             }
         }
+        // stopping client connection
+        client.stop();
+        Serial.println("\n[Disconnected]");
+    }
+    if (millis() > page_timer + 3000) {
+        page_timer = millis();
 
-        else {
-            Serial.println("connection failed!]");
-            client.stop();
-        }
-    } else {
-        // would do it anyway, but just to be sure ;)
-        yield();
+        printResultsLED();
     }
 }
 
@@ -179,4 +127,104 @@ void writeToDisplay(U8G2_MAX7219_64X8_F_4W_SW_SPI* u8g2R, char* buffer) {
     u8g2R->setFont(u8g2_font_5x7_mf);  // choose a suitable font
     u8g2R->drawStr(0, 7, buffer);      // write something to the internal memory
     u8g2R->sendBuffer();               // transfer internal memory to the display
+}
+void requestData(WiFiClient* client) {
+    const char* host = "www.linzag.at";
+    Serial.printf("\n[Connecting to %s ... ", host);
+    if (client->connect(host, 80)) {
+        Serial.println("connected]");
+        Serial.println("[Sending a request]");
+        client->print(String("GET /static/XML_DM_REQUEST?name_dm=60500980&type_dm=any&mode=direct&limit=") + NO_TRIPS + " HTTP/1.1\r\n" +
+                      "Host: " + host + "\r\n" +
+                      "Connection: close\r\n" +
+                      "\r\n");
+
+        Serial.println("[Response:]");
+    } else {
+        Serial.println("[Connection failed!]");
+        client->stop();
+    }
+}
+
+void processResponse(int* state, String* line, int* i) {
+    int idx = 0;
+    int idx2 = 0;
+
+    String subs;
+
+    switch (*state) {  // state machine for reading input data
+        case 0:        // read countdown = minutes to departure
+            // find occurence of first "countdown=\"" in string
+            idx = line->indexOf("countdown=\"");
+
+            if (idx > 0) {
+                idx2 = line->indexOf("\"", idx + 11);
+                subs = line->substring(idx + 11, idx2);
+                countdown[*i] = subs.toInt();  // convert the string we found to integer
+                *state = 1;
+            }
+            break;
+        case 1:  // read number = line number && direction = destination name
+            idx = line->indexOf("number=\"");
+            if (idx > 0) {
+                idx2 = line->indexOf("\"", idx + 8);
+                subs = line->substring(idx + 8, idx2);
+
+                bimline[*i] = subs.toInt();  // convert the line number to integer
+
+                idx = line->indexOf("direction=\"", idx2);
+
+                idx2 = line->indexOf("\"", idx + 16);
+                dest[*i] = line->substring(idx + 16, idx2);
+
+                if (dest[*i].startsWith("JKU")) {
+                    // if "JKU[...]", convert to "JKU Uni", otherwise it writes "JKU I U" onto the display
+                    dest[*i].clear();
+                    dest[*i] = "JKU Univ";
+                }
+
+                // print information on serial port -- debugging
+                char string[70];
+                dest[*i].toCharArray(string, dest[*i].length());
+                Serial.printf("%02d: %02d %s %02d\n", *i, bimline[*i], string, countdown[*i]);
+
+                // only if the state 1 was reached, a valid entry has been processed
+                // therefore we can now increment our counter
+                (*i)++;  // increment departure counter
+
+                // switch to other state
+                *state = 0;
+            }
+            break;
+        default:
+            *state = 0;
+            break;
+    }
+}
+
+void printResultsLED() {
+    // write grabbed information onto the display
+    char buffer[16];
+    char string[7];
+    int minutes;
+
+    display_page++;  // show next display page
+
+    // show different pages of the departure monitor
+    // adds functionality and more movement
+    int i = 3 * ((display_page - 1) % 4);
+    for (int line = 0; line < 4; line++) {
+        minutes = countdown[i];
+        if (minutes > 99) {
+            minutes = 99;  // only two digits are available
+        }
+        dest[i].toCharArray(string, dest[i].length());
+        sprintf(buffer, "%02d %.*s %02d", bimline[i], 7, string, minutes);
+        writeToDisplay(&(u8g2Lines[line]), buffer);
+
+        // if (bimline[i] == 38 && dest[i].startsWith("J")) {
+        //     line--;  // if it is "Jäger im Tal" we do not need to display
+        // }
+        i++;
+    }
 }
