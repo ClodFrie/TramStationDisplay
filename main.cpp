@@ -65,7 +65,6 @@ void setup(void) {
     for (int i = 0; i < 4; i++) {
         (u8g2Lines[i]).begin();
         (u8g2Lines[i]).setContrast(15);
-        // writeToDisplay(&(u8g2Lines[i]),"dsadak");
     }
 
     // initialize timing variable
