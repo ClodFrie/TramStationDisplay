@@ -174,8 +174,8 @@ void processResponse(int* state, String* line, int* i) {
 
                 idx = line->indexOf("direction=\"", idx2);
 
-                idx2 = line->indexOf("\"", idx + 16);
-                dest[*i] = line->substring(idx + 16, idx2);
+                idx2 = line->indexOf("\"", idx + 11);
+                dest[*i] = line->substring(idx + 11, idx2);
 
                 if (dest[*i].startsWith("JKU")) {
                     // if "JKU[...]", convert to "JKU Uni", otherwise it writes "JKU I U" onto the display
